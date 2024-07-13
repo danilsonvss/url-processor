@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,11 +14,24 @@ import (
 
 var rdb *redis.Client
 
+const maxRetries = 5
+const retryInterval = 2 * time.Second
+
 func main() {
+	// Obtendo configurações do Redis via variáveis de ambiente
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379" // Valor padrão
+	}
+	redisDB, err := strconv.Atoi(os.Getenv("REDIS_DB"))
+	if err != nil {
+		redisDB = 0 // Valor padrão
+	}
+
 	// Configuração do cliente Redis
 	rdb = redis.NewClient(&redis.Options{
-		Addr: "redis:6379", // Nome do serviço do Redis conforme definido no docker-compose.yml
-		DB:   0,
+		Addr: redisAddr,
+		DB:   redisDB,
 	})
 
 	// Configuração do servidor HTTP com Gin
@@ -85,16 +100,32 @@ func processURLs() {
 }
 
 func processURL(url string) {
-	// Simulação de processamento da URL
-	log.Printf("Chamando URL: %s", url)
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Printf("Erro ao chamar a URL %s: %v", url, err)
-		// Você pode implementar lógica de retry aqui se necessário
+	for i := 0; i < maxRetries; i++ {
+		// Tentar chamar a URL
+		resp, err := http.Get(url)
+		if err != nil {
+			log.Printf("Erro ao chamar a URL %s na tentativa %d: %v", url, i+1, err)
+			time.Sleep(retryInterval) // Espera antes de tentar novamente
+			continue
+		}
+		defer resp.Body.Close()
+
+		// Se a chamada for bem-sucedida, registra o sucesso e retorna
+		log.Printf("URL %s chamada com sucesso, status: %s", url, resp.Status)
 		return
 	}
-	defer resp.Body.Close()
 
-	log.Printf("URL %s chamada com sucesso, status: %s", url, resp.Status)
-	// Aqui você pode processar a resposta da chamada se necessário
+	// Se todas as tentativas falharem, registra o erro
+	log.Printf("Falha ao chamar a URL %s após %d tentativas", url, maxRetries)
+
+	// Gravar um log adicional em um arquivo no caso de falha em todas as tentativas
+	f, err := os.OpenFile("failed_urls.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("Erro ao abrir arquivo de log: %v", err)
+		return
+	}
+	defer f.Close()
+
+	logger := log.New(f, "", log.LstdFlags)
+	logger.Printf("Falha ao chamar a URL %s após %d tentativas", url, maxRetries)
 }
