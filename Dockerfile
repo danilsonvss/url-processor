@@ -21,6 +21,12 @@ RUN go build -o /app/app .
 # Imagem mínima do Debian para executar o aplicativo compilado
 FROM debian:bullseye-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    iputils-ping \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copia o binário compilado do estágio anterior
 COPY --from=builder /app/app /app/app
 
